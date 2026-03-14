@@ -86,6 +86,11 @@
       "app": "catty-reminders-app"
     },
     {
+      "login": "Psevd00",
+      "id": "astafev",
+      "app": "catty-reminders-app"
+    },
+    {
       "login": "Pyshisha",
       "id": "ryzkov",
       "app": "catty-reminders-app"
@@ -123,6 +128,11 @@
     {
       "login": "IMPULSE-LAB-CRYPTO",
       "id": "simonov",
+      "app": "catty-reminders-app"
+    },
+    {
+      "login": "Deemeed",
+      "id": "chentsov",
       "app": "catty-reminders-app"
     }
   ]
