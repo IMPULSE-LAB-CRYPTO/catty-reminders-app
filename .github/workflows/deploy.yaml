@@ -7,10 +7,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Deploy via SSH
+      - name: Remote Docker Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: course.prafdin.ru
@@ -18,24 +15,26 @@ jobs:
           port: 3120
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # 1. Переходим в папку, где лежит docker-compose.yaml
             cd /home/ilya/catty-reminders-app
+            OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-            # 2. Экспортируем данные напрямую
+            # Передаем всё через экспорт
+            export APP_IMAGE="ghcr.io/$OWNER/catty-reminders-app:latest&quot;
             export DEPLOY_REF="${{ github.sha }}"
-            export APP_IMAGE="ghcr.io/impulse-lab-crypto/catty-reminders-app:latest&quot;
+            export APP_CONTAINER_NAME=catty-app
+            export DB_CONTAINER_NAME=catty_db
+            export MYSQL_ROOT_PASSWORD=mypass
+            export MYSQL_USER=user
+            export MYSQL_PASSWORD=mypass
+            export MYSQL_DATABASE=catty_reminders
+            export APP_PORT=8181
+            export DB_PORT=3306
 
-            # 3. Полный сброс (удаляем контейнеры и старый образ)
-            docker compose down --remove-orphans
-            docker rmi $APP_IMAGE || true
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 4. Запуск с новым SHA
-            # Мы передаем DEPLOY_REF прямо в команду
-            DEPLOY_REF=${{ github.sha }} docker compose up -d --pull always --force-recreate
+            # Принудительное пересоздание
+            docker compose up -d --pull always --remove-orphans --force-recreate
 
-            # 5. Инициализация базы (чтобы точно был tester)
+            # Добавление пользователя для тестов бота
             sleep 15
-            docker exec catty_db mysql -u root -pmypass catty_reminders -e "
-            CREATE TABLE IF NOT EXISTS users (username VARCHAR(255) PRIMARY KEY, password VARCHAR(255));
-            INSERT IGNORE INTO users VALUES ('tester', 'foobar123');
-            INSERT IGNORE INTO users VALUES ('heisenberg', 'P@ssw0rd');"
+            docker exec catty_db mysql -u root -pmypass catty_reminders -e "INSERT IGNORE INTO users (username, password) VALUES ('tester', 'foobar123');"
