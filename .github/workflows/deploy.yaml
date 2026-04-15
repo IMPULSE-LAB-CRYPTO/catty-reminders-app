@@ -21,24 +21,16 @@ jobs:
             cd /home/ilya/catty-reminders-app
             OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
+            # Экспортируем данные для compose
             export APP_IMAGE="ghcr.io/$OWNER/catty-reminders-app:latest&quot;
             export DEPLOY_REF="${{ github.sha }}"
-            export APP_CONTAINER_NAME=catty-app
-            export DB_CONTAINER_NAME=catty_db
             export MYSQL_ROOT_PASSWORD=mypass
-            export MYSQL_USER=user
-            export MYSQL_PASSWORD=mypass
             export MYSQL_DATABASE=catty_reminders
-            export APP_PORT=8181
-            export DB_PORT=3306
 
+            # Логин и обновление
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose up -d --pull always --force-recreate --remove-orphans
 
-            # Разворачиваем стек. В Docker-сети config.json с хостом 'db' 
-            docker compose up -d --pull always --remove-orphans --force-recreate
-
-            # Ждем и добавляем пользователя для бота
-            sleep 20
-            docker exec catty_db mysql -u root -pmypass catty_reminders -e "
-            CREATE TABLE IF NOT EXISTS users (username VARCHAR(255) PRIMARY KEY, password VARCHAR(255));
-            INSERT IGNORE INTO users VALUES ('tester', 'foobar123');"
+            # Гарантируем наличие пользователя для бота после пересоздания базы
+            sleep 15
+            docker exec catty_db mysql -u root -pmypass catty_reminders -e "INSERT IGNORE INTO users (username, password) VALUES ('tester', 'foobar123');"
