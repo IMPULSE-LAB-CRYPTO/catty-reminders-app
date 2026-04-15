@@ -1,28 +1,41 @@
 name: CI
+
 on:
   push:
-    branches: [ lab4* ]
+    branches:
+      - lab4*
   pull_request:
-    branches: [ lab4* ]
+    branches:
+      - lab4*
 
 jobs:
-  tests:
+  docker-lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hadolint
+        run: |
+          docker run --rm -i hadolint/hadolint hadolint - < Dockerfile
+
+  pipeline:
+    needs: docker-lint
+    if: success()
+    runs-on: ubuntu-latest
+
     services:
-      mysql:
-        image: mysql:5.7
+      db:
+        image: mariadb:11
         env:
-          MYSQL_ROOT_PASSWORD: mypass
-          MYSQL_DATABASE: catty_reminders
+          MARIADB_ROOT_PASSWORD: mypass
+          MARIADB_DATABASE: catty_reminders
         ports:
           - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Install Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -30,43 +43,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest-playwright uvicorn
+          pip install -r requirements.txt
+          pip install uvicorn pytest-playwright
           playwright install --with-deps chromium
 
-      - name: Create CI Config
-        # Вместо sed мы просто записываем правильный JSON для тестов в файл
-        run: |
-          cat <<EOF > config.json
-          {
-            "secret_key": "Cats are awesome!",
-            "users": {
-              "heisenberg": "P@ssw0rd",
-              "tester": "foobar123"
-            },
-            "db_config": {
-              "host": "127.0.0.1",
-              "port": 3306,
-              "user": "root",
-              "password": "mypass",
-              "database": "catty_reminders"
-            }
-          }
-          EOF
-
       - name: Start app
-        env:
-          PYTHONPATH: ${{ github.workspace }}
         run: |
-          nohup uvicorn app.main:app --host 127.0.0.1 --port 8181 > app_debug.log 2>&1 &
-          sleep 10
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8181 &
+          sleep 5
 
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: |
-          pytest --junitxml=test_result.xml || (echo "CRITICAL: App Logs below:" && cat app_debug.log && exit 1)
+        run: pytest --junitxml=test_result.xml
 
-      - name: Upload results
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -74,29 +65,36 @@ jobs:
           path: test_result.xml
 
   docker-build:
-    needs: tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    needs: pipeline
+    if: success()
     permissions:
       contents: read
       packages: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Prepare Image Name
-        id: prep
-        run: echo "repo_lower=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ steps.prep.outputs.repo_lower }}:latest
-            ghcr.io/${{ steps.prep.outputs.repo_lower }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
