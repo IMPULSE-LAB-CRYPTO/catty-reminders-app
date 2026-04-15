@@ -10,34 +10,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare Image Name
-        id: prep
-        run: echo "repo_lower=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
-      - name: Create .env file
-        run: |
-          echo "APP_IMAGE=ghcr.io/${{ steps.prep.outputs.repo_lower }}:latest" > .env
-          echo "DEPLOY_REF=${{ github.sha }}" >> .env
-          echo "APP_PORT=8181" >> .env
-          echo "APP_CONTAINER_NAME=catty-app" >> .env
-          echo "DB_CONTAINER_NAME=catty_db" >> .env
-          echo "MYSQL_ROOT_PASSWORD=mypass" >> .env
-          echo "MYSQL_USER=user" >> .env
-          echo "MYSQL_PASSWORD=mypass" >> .env
-          echo "MYSQL_DATABASE=catty_reminders" >> .env
-          echo "DB_PORT=3306" >> .env
-
-      - name: Copy files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: course.prafdin.ru
-          username: ilya
-          port: 3120
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: ".env,docker-compose.yaml,config.json"
-          target: "/home/ilya/catty-compose"
-
-      - name: Deploy via SSH
+      - name: Remote Docker Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: course.prafdin.ru
@@ -45,21 +18,30 @@ jobs:
           port: 3120
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # Переходим в рабочую папку
             cd /home/ilya/catty-compose
+
+            # Принудительно приводим логин к нижнему регистру
+            OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+            REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+
+            # Экспортируем переменные напрямую для Docker Compose
+            export APP_IMAGE="ghcr.io/$OWNER/$REPO:latest&quot;
+            export DEPLOY_REF="${{ github.sha }}"
+
+            # Переменные для базы и портов (чтобы не зависеть от старого .env)
+            export MYSQL_ROOT_PASSWORD=mypass
+            export MYSQL_DATABASE=catty_reminders
+            export APP_PORT=8181
+            export DB_PORT=3306
+            export DB_CONTAINER_NAME=catty_db
+            export APP_CONTAINER_NAME=catty-app
+
+            # Авторизация
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 1. Останавливаем и УДАЛЯЕМ контейнеры и сеть
-            docker compose down --remove-orphans
+            # Деплой: тянем образ всегда, пересоздаем контейнер всегда
+            docker compose -f docker-compose.yaml up -d --pull always --force-recreate --remove-orphans
 
-            # 2. ПРИНУДИТЕЛЬНО УДАЛЯЕМ старый образ, чтобы Docker скачал его заново
-            # Мы используем || true, чтобы скрипт не падал, если образа нет
-            docker rmi ghcr.io/${{ steps.prep.outputs.repo_lower }}:latest || true
-
-            # 3. Скачиваем абсолютно чистую версию
-            docker compose pull
-
-            # 4. Запускаем
-            docker compose up -d
-
-            # Очистка мусора
+            # Очистка
             docker image prune -f
