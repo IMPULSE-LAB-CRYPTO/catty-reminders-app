@@ -6,14 +6,12 @@ on:
     branches: [ lab4* ]
 
 jobs:
-  pipeline:
+  tests:
     runs-on: ubuntu-latest
-
     services:
       mysql:
         image: mysql:5.7
         env:
-          # Пароль как в config.json
           MYSQL_ROOT_PASSWORD: mypass
           MYSQL_DATABASE: catty_reminders
         ports:
@@ -21,9 +19,7 @@ jobs:
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -31,21 +27,16 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt pytest-playwright uvicorn
           playwright install --with-deps chromium
 
-      - name: Initialize Database Tables
-        run: |
-          # Приложение само создает таблицы через MySQLStorage.__init__, 
-          # но мы убедимся, что база reminders существует
-          docker exec ${{ job.services.mysql.id }} mysql -u root -pmypass -e "CREATE DATABASE IF NOT EXISTS catty_reminders;"
+      - name: Patch Config for CI
+        # меняет 'db' на '127.0.0.1' только для тестов в облаке
+        run: sed -i 's/"host": "db"/"host": "127.0.0.1"/g' config.json
 
       - name: Start app
         env:
           PYTHONPATH: ${{ github.workspace }}
-          # DATABASE_URL твое приложение игнорирует, оно читает config.json
-          # Но мы оставляем PYTHONPATH, чтобы тесты видели модули
         run: |
           nohup uvicorn app.main:app --host 127.0.0.1 --port 8181 > app_debug.log 2>&1 &
           sleep 10
@@ -53,11 +44,9 @@ jobs:
       - name: Run tests
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: |
-          # Запускаем тесты. Если 500 ошибка повторится - выведем реальный лог
-          pytest --junitxml=test_result.xml || (echo "CRITICAL: App Logs below:" && cat app_debug.log && exit 1)
+        run: pytest --junitxml=test_result.xml || (cat app_debug.log && exit 1)
 
-      - name: Upload test results
+      - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -65,7 +54,7 @@ jobs:
           path: test_result.xml
 
   docker-build:
-    needs: pipeline
+    needs: tests
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     permissions:

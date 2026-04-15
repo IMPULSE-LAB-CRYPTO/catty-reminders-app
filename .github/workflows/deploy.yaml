@@ -7,6 +7,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Remote Docker Deploy
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -18,7 +21,6 @@ jobs:
             cd /home/ilya/catty-reminders-app
             OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
 
-            # Передаем всё через экспорт
             export APP_IMAGE="ghcr.io/$OWNER/catty-reminders-app:latest&quot;
             export DEPLOY_REF="${{ github.sha }}"
             export APP_CONTAINER_NAME=catty-app
@@ -32,9 +34,11 @@ jobs:
 
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # Принудительное пересоздание
+            # Разворачиваем стек. В Docker-сети config.json с хостом 'db' 
             docker compose up -d --pull always --remove-orphans --force-recreate
 
-            # Добавление пользователя для тестов бота
-            sleep 15
-            docker exec catty_db mysql -u root -pmypass catty_reminders -e "INSERT IGNORE INTO users (username, password) VALUES ('tester', 'foobar123');"
+            # Ждем и добавляем пользователя для бота
+            sleep 20
+            docker exec catty_db mysql -u root -pmypass catty_reminders -e "
+            CREATE TABLE IF NOT EXISTS users (username VARCHAR(255) PRIMARY KEY, password VARCHAR(255));
+            INSERT IGNORE INTO users VALUES ('tester', 'foobar123');"
