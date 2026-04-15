@@ -33,10 +33,25 @@ jobs:
           pip install -r requirements.txt pytest-playwright uvicorn
           playwright install --with-deps chromium
 
-      - name: Patch Config for CI
-        # Используем пайп (|)
+      - name: Create CI Config
+        # Вместо sed мы просто записываем правильный JSON для тестов в файл
         run: |
-          sed -i 's/"host": "db"/"host": "127.0.0.1"/g' config.json
+          cat <<EOF > config.json
+          {
+            "secret_key": "Cats are awesome!",
+            "users": {
+              "heisenberg": "P@ssw0rd",
+              "tester": "foobar123"
+            },
+            "db_config": {
+              "host": "127.0.0.1",
+              "port": 3306,
+              "user": "root",
+              "password": "mypass",
+              "database": "catty_reminders"
+            }
+          }
+          EOF
 
       - name: Start app
         env:
@@ -68,18 +83,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Prepare Image Name
         id: prep
         run: echo "repo_lower=$(echo ${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
-
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
