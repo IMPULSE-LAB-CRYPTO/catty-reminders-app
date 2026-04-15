@@ -10,7 +10,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Remote Docker Deploy
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: course.prafdin.ru
@@ -18,30 +18,24 @@ jobs:
           port: 3120
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Переходим в рабочую папку
-            cd /home/ilya/catty-compose
+            # 1. Переходим в папку, где лежит docker-compose.yaml
+            cd /home/ilya/catty-reminders-app
 
-            # Принудительно приводим логин к нижнему регистру
-            OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-            REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-
-            # Экспортируем переменные напрямую для Docker Compose
-            export APP_IMAGE="ghcr.io/$OWNER/$REPO:latest&quot;
+            # 2. Экспортируем данные напрямую
             export DEPLOY_REF="${{ github.sha }}"
+            export APP_IMAGE="ghcr.io/impulse-lab-crypto/catty-reminders-app:latest&quot;
 
-            # Переменные для базы и портов (чтобы не зависеть от старого .env)
-            export MYSQL_ROOT_PASSWORD=mypass
-            export MYSQL_DATABASE=catty_reminders
-            export APP_PORT=8181
-            export DB_PORT=3306
-            export DB_CONTAINER_NAME=catty_db
-            export APP_CONTAINER_NAME=catty-app
+            # 3. Полный сброс (удаляем контейнеры и старый образ)
+            docker compose down --remove-orphans
+            docker rmi $APP_IMAGE || true
 
-            # Авторизация
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            # 4. Запуск с новым SHA
+            # Мы передаем DEPLOY_REF прямо в команду
+            DEPLOY_REF=${{ github.sha }} docker compose up -d --pull always --force-recreate
 
-            # Деплой: тянем образ всегда, пересоздаем контейнер всегда
-            docker compose -f docker-compose.yaml up -d --pull always --force-recreate --remove-orphans
-
-            # Очистка
-            docker image prune -f
+            # 5. Инициализация базы (чтобы точно был tester)
+            sleep 15
+            docker exec catty_db mysql -u root -pmypass catty_reminders -e "
+            CREATE TABLE IF NOT EXISTS users (username VARCHAR(255) PRIMARY KEY, password VARCHAR(255));
+            INSERT IGNORE INTO users VALUES ('tester', 'foobar123');
+            INSERT IGNORE INTO users VALUES ('heisenberg', 'P@ssw0rd');"
